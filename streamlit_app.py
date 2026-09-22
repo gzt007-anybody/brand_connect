@@ -153,6 +153,96 @@ def generate_image(client, product, style, comment, image_number, reference_imag
     raise RuntimeError("이미지 결과를 받지 못했습니다.")
 
 
+COMIC_STYLES = {
+    "따뜻한 생활툰": "따뜻한 파스텔 색감, 친근한 생활 웹툰, 부드러운 선과 표정",
+    "신문 연재 만화": "간결한 펜선, 절제된 색, 재치 있는 신문 연재 4컷 만화",
+    "깔끔한 컬러 웹툰": "선명한 컬러, 깨끗한 윤곽선, 현대적인 한국 웹툰",
+}
+
+
+def _json_from_text(text):
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.split("\n", 1)[-1]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+    return json.loads(cleaned.strip())
+
+
+def generate_galmel_story(client, product, article, tone, direction):
+    prompt = f"""
+당신은 정직한 한국어 커머스 4컷 만화 작가다. 고정 주인공 이름은 '갈멜'이다.
+갈멜은 친근하고 현실적인 한국 중년 남성이며, 단순한 표정과 몸짓으로 생활 속 구매 고민을 유머 있게 보여준다.
+
+[상품 자료]
+{build_source(product, [])}
+
+[블로그 초안]
+{article[:7000]}
+
+[요청]
+- 분위기: {tone}
+- 사용자의 추가 방향: {direction or '없음'}
+- 흐름은 1) 생활 속 고민 2) 비교하며 생긴 웃긴 상황 3) 제공된 사실에 근거한 상품 발견 4) 자신에게 맞는지 확인하고 링크를 살펴보는 합리적 선택으로 구성한다.
+- 구매 관심은 자연스럽게 높이되 허위 할인, 품절 압박, 공포·죄책감, 가짜 후기, 보장되지 않은 효과를 쓰지 않는다.
+- 상품의 단점이나 확인사항도 필요하면 짧게 반영한다.
+- 이미지 안에서 읽히도록 대사는 패널당 18자 안팎으로 짧게 쓴다.
+- 오직 아래 구조의 유효한 JSON만 출력한다. 마크다운 코드블록은 쓰지 않는다.
+{{
+  "title": "짧은 만화 제목",
+  "theme": "한 줄 주제",
+  "panels": [
+    {{"caption":"1컷", "scene":"그림 장면", "dialogue":"짧은 대사", "narration":"짧은 설명"}},
+    {{"caption":"2컷", "scene":"그림 장면", "dialogue":"짧은 대사", "narration":"짧은 설명"}},
+    {{"caption":"3컷", "scene":"그림 장면", "dialogue":"짧은 대사", "narration":"짧은 설명"}},
+    {{"caption":"4컷", "scene":"그림 장면", "dialogue":"짧은 대사", "narration":"짧은 설명"}}
+  ],
+  "closing": "과장 없는 짧은 마무리 문구"
+}}
+"""
+    response = client.responses.create(model=secret("TEXT_MODEL", "gpt-5.6-luna"), input=prompt)
+    story = _json_from_text(response.output_text)
+    if len(story.get("panels", [])) != 4:
+        raise ValueError("4개 패널로 된 스토리를 받지 못했습니다.")
+    return story
+
+
+def galmel_story_text(story):
+    lines = [f"# {story.get('title', '갈멜의 상품 고민')}", story.get("theme", ""), ""]
+    for index, panel in enumerate(story.get("panels", []), 1):
+        lines.extend([f"## {index}컷", f"장면: {panel.get('scene', '')}", f"갈멜: {panel.get('dialogue', '')}", f"설명: {panel.get('narration', '')}", ""])
+    lines.append(f"마무리: {story.get('closing', '')}")
+    return "\n".join(lines)
+
+
+def build_galmel_comic_prompt(story, style):
+    panels = []
+    for index, panel in enumerate(story.get("panels", []), 1):
+        panels.append(f"{index}컷 장면: {panel.get('scene', '')}\n말풍선: {panel.get('dialogue', '')}\n하단 설명: {panel.get('narration', '')}")
+    return f"""
+제목 '{story.get('title', '갈멜의 상품 고민')}'의 한국어 4컷 만화를 한 장에 그리세요.
+주인공은 모든 칸에서 동일한 얼굴과 옷을 유지하는 고정 캐릭터 '갈멜'입니다.
+갈멜은 친근한 한국 중년 남성이고 과장되지 않은 표정과 몸짓으로 현실적인 유머를 보여줍니다.
+화풍: {COMIC_STYLES[style]}
+가로 2x2 배열, 칸 경계가 명확하고 읽는 순서는 왼쪽 위부터 오른쪽 아래입니다.
+
+{chr(10).join(panels)}
+
+한국어 문구는 위에 지정된 짧은 문구만 정확하고 크게 표시하세요. 확인되지 않은 로고·가격·할인율·효능은 넣지 마세요.
+제품 외형을 정확히 알 수 없는 부분은 일반적인 소품으로 단순화하세요. 마지막 장면은 강압적인 구매가 아니라
+'나에게 맞는지 확인해 보자'는 기분 좋은 여운을 주세요.
+""".strip()
+
+
+def generate_galmel_comic(client, story, style):
+    prompt = build_galmel_comic_prompt(story, style)
+    result = client.images.generate(model=secret("IMAGE_MODEL", "gpt-image-2.5-flare"), prompt=prompt, size="1536x1024", quality="medium")
+    encoded = result.data[0].b64_json
+    if not encoded:
+        raise RuntimeError("만화 이미지 결과를 받지 못했습니다.")
+    return base64.b64decode(encoded), prompt
+
+
 st.markdown('<div class="eyebrow">BRAND POST STUDIO</div>', unsafe_allow_html=True)
 st.title("상품 하나로, 설득력 있는 블로그 초안까지")
 st.caption("상품 정보와 비교 대상을 입력하면 가격 비교표·블로그 원고·대표 이미지를 만듭니다.")
@@ -243,6 +333,9 @@ if submitted:
         st.session_state["product"] = product
         st.session_state["image_style"] = image_style
         st.session_state["generated_images"] = {}
+        st.session_state.pop("galmel_story", None)
+        st.session_state.pop("galmel_image", None)
+        st.session_state["galmel_edit_version"] = 0
         for index in range(1, 5):
             st.session_state.pop(f"image_comment_{index}", None)
         try:
@@ -254,7 +347,7 @@ if submitted:
 
 if st.session_state.get("article"):
     st.divider()
-    article_tab, image_tab, check_tab = st.tabs(["블로그 초안", "이미지 3~4장", "발행 전 점검"])
+    article_tab, image_tab, comic_tab, check_tab = st.tabs(["블로그 초안", "이미지 3~4장", "갈멜 4컷", "발행 전 점검"])
     with article_tab:
         st.markdown(st.session_state["article"])
         filename = f"blog_draft_{datetime.now():%Y%m%d_%H%M}.md"
@@ -361,6 +454,62 @@ if st.session_state.get("article"):
                         use_container_width=True,
                         key=f"download_image_{index}",
                     )
+    with comic_tab:
+        st.subheader("갈멜의 재미있는 상품 고민 4컷")
+        st.caption("스토리 초안을 만든 뒤 장면과 대사를 직접 고치고, 확인이 끝났을 때 만화 이미지를 생성하세요.")
+        st.info("갈멜은 웃음과 공감으로 관심을 이끌지만, 허위 할인·불안 조장·가짜 후기는 사용하지 않습니다.")
+        comic_c1, comic_c2 = st.columns(2)
+        comic_tone = comic_c1.selectbox("스토리 분위기", ["일상 공감형", "위트 있는 구매 고민형", "생활 정보형"], key="galmel_tone")
+        comic_style = comic_c2.selectbox("만화 화풍", list(COMIC_STYLES), key="galmel_style")
+        comic_direction = st.text_area("갈멜에게 원하는 이야기 방향 (선택)", placeholder="예: 출근할 때 옷 고르기 어려운 갈멜이 편안한 코디를 찾는 이야기", height=90, key="galmel_direction")
+        if st.button("갈멜 스토리 초안 만들기", type="primary", use_container_width=True):
+            try:
+                with st.spinner("갈멜의 4컷 이야기를 구상하고 있습니다..."):
+                    client = OpenAI(api_key=api_key)
+                    st.session_state["galmel_story"] = generate_galmel_story(client, st.session_state["product"], st.session_state["article"], comic_tone, comic_direction)
+                    st.session_state["galmel_edit_version"] = st.session_state.get("galmel_edit_version", 0) + 1
+                    st.session_state.pop("galmel_image", None)
+                st.success("스토리 초안이 준비되었습니다. 아래 내용을 자유롭게 고쳐주세요.")
+            except Exception as exc:
+                st.error(f"스토리 생성 중 문제가 발생했습니다: {exc}")
+
+        story = st.session_state.get("galmel_story")
+        if story:
+            version = st.session_state.get("galmel_edit_version", 0)
+            with st.form(f"galmel_editor_{version}"):
+                edited_title = st.text_input("만화 제목", value=story.get("title", ""))
+                edited_theme = st.text_input("이야기 주제", value=story.get("theme", ""))
+                edited_panels = []
+                for index, panel in enumerate(story.get("panels", []), 1):
+                    st.markdown(f"#### {index}컷")
+                    scene = st.text_area("장면", value=panel.get("scene", ""), key=f"galmel_scene_{version}_{index}")
+                    dialogue = st.text_input("갈멜의 대사", value=panel.get("dialogue", ""), key=f"galmel_dialogue_{version}_{index}")
+                    narration = st.text_input("하단 설명", value=panel.get("narration", ""), key=f"galmel_narration_{version}_{index}")
+                    edited_panels.append({"caption": f"{index}컷", "scene": scene, "dialogue": dialogue, "narration": narration})
+                edited_closing = st.text_input("마무리 문구", value=story.get("closing", ""))
+                save_story = st.form_submit_button("수정한 스토리 저장", use_container_width=True)
+            if save_story:
+                st.session_state["galmel_story"] = {"title": edited_title, "theme": edited_theme, "panels": edited_panels, "closing": edited_closing}
+                st.session_state.pop("galmel_image", None)
+                story = st.session_state["galmel_story"]
+                st.success("수정한 스토리를 저장했습니다.")
+
+            with st.expander("현재 4컷 스토리 한눈에 보기", expanded=True):
+                st.markdown(galmel_story_text(story))
+            st.download_button("4컷 스토리 저장", galmel_story_text(story), file_name="galmel_4cut_story.md", mime="text/markdown", use_container_width=True)
+            st.warning("AI가 이미지 속 한국어를 틀리게 그릴 수 있습니다. 생성 후 대사와 상품 표현을 꼭 확인해주세요.")
+            if st.button("확인한 내용으로 4컷 만화 생성", type="primary", use_container_width=True):
+                try:
+                    with st.spinner("갈멜 4컷 만화를 그리고 있습니다..."):
+                        client = OpenAI(api_key=api_key)
+                        comic_bytes, comic_prompt = generate_galmel_comic(client, story, comic_style)
+                        st.session_state["galmel_image"] = {"bytes": comic_bytes, "prompt": comic_prompt}
+                except Exception as exc:
+                    st.error(f"4컷 만화 생성 중 문제가 발생했습니다: {exc}")
+            comic = st.session_state.get("galmel_image")
+            if comic:
+                st.image(comic["bytes"], caption=story.get("title", "갈멜 4컷"), use_container_width=True)
+                st.download_button("갈멜 4컷 이미지 저장", comic["bytes"], file_name="galmel_4cut.png", mime="image/png", use_container_width=True)
     with check_tab:
         checks = [
             "글 첫 부분에 경제적 이해관계가 명확히 표시되어 있나요?",

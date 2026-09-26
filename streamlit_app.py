@@ -67,11 +67,11 @@ def build_source(product, competitors):
 def generate_article(client, product, competitors, settings):
     source = build_source(product, competitors)
     disclosure = (
-        "이 글에는 브랜드 커넥트 제휴 링크가 포함되어 있으며, "
-        "링크를 통한 구매 시 작성자에게 수수료가 지급될 수 있습니다."
+        "이 포스팅은 네이버 쇼핑 커넥트 활동의 일환으로, "
+        "판매 발생 시 수수료를 제공받습니다."
     )
     prompt = f"""
-당신은 한국어 네이버 블로그의 정직한 상품 비교 에디터다.
+당신은 한국어 네이버 블로그의 설득력 있는 상품 소개 카피라이터다.
 아래 제공 자료만 사실로 사용하고, 확인하지 않은 사용 경험·효능·최저가를 만들지 마라.
 가격은 변동될 수 있다고 명시하고, 과장된 확정 표현과 경쟁사 비방을 피하라.
 
@@ -84,8 +84,14 @@ def generate_article(client, product, competitors, settings):
 - 목표 분량: 약 {settings['length']}자
 - 핵심 키워드: {settings['keywords'] or product['name']}
 - 첫 문단 전에 다음 문구를 그대로 표시: {disclosure}
-- 제목 후보 5개, 한줄 요약, 본문, 비교표, 추천 대상/비추천 대상, 구매 전 확인사항, 해시태그 순서
-- 링크는 본문 후반의 자연스러운 행동 문구 한 곳에만 넣기
+- 기사나 보도자료처럼 건조하게 쓰지 말고, 독자가 상품을 발견하고 장점을 쉽게 상상하도록 친근하고 설득력 있게 쓴다.
+- 글의 중심은 '어떤 상품인가'보다 '왜 눈여겨볼 만한가, 누구에게 잘 맞는가, 구매 전에 무엇을 확인할까'에 둔다.
+- 도입부에서 독자의 생활 속 고민에 공감하고, 상품의 특징이 그 고민과 어떻게 연결되는지 구체적으로 설명한다.
+- 제공된 사실에 근거한 구매 포인트를 3~5개로 강조하고, 각 포인트마다 실제 활용 장면을 상상할 수 있는 문장을 붙인다.
+- 본문 중간에 Markdown 인용문 형식(`> 문구`)의 짧은 핵심 문구를 1~2개 넣는다. 광고 카피처럼 기억에 남되 확인되지 않은 효과나 최상급 표현은 쓰지 않는다.
+- 제목 후보 5개, 한줄 핵심 제안, 공감형 도입, 상품 소개, 구매 포인트, 비교표, 추천 대상, 구매 전 확인사항, 구매 링크 안내, 해시태그 순서로 쓴다.
+- 구매 링크 안내는 독자에게 명확한 행동을 권하는 설득형 문장 2~3개로 작성하고 제휴 링크를 한 번 넣는다.
+- '무조건 사세요', '품절 전에', '절대 후회 없음' 같은 강압·허위 긴급성 표현은 피하고, 선택에 도움이 되는 방식으로 구매를 권한다.
 - 실제 경험이 비어 있으면 체험한 것처럼 1인칭으로 쓰지 않기
 - Markdown으로 작성
 """
@@ -98,8 +104,10 @@ def generate_article(client, product, competitors, settings):
 
 def build_image_prompt(product, style, comment, image_number, has_references=False):
     reference_rule = (
-        "첨부된 원본 상품 이미지의 형태·색상·패턴·주요 디테일을 우선 보존하고, "
-        "배경과 연출만 사용자의 요청에 맞게 바꾸세요."
+        "첨부된 첫 번째 이미지를 상품 정체성의 최우선 기준으로 사용하세요. 상품의 실루엣, 비율, 색상 배치, "
+        "패턴, 소재감, 칼라·소매·단추·포켓·자수 등 식별 가능한 디테일을 그대로 보존하세요. "
+        "다른 상품으로 재해석하거나 디자인을 추가·삭제하지 마세요. 배경, 조명, 카메라 구도와 주변 연출만 "
+        "사용자 요청에 맞게 변경하세요. 나머지 첨부 이미지는 측면·후면·세부 형태를 확인하는 보조 기준입니다."
         if has_references
         else "원본 이미지가 없으므로 실제 상품의 정확한 외형을 아는 것처럼 만들지 말고 일반적인 연출 이미지로 표현하세요."
     )
@@ -115,6 +123,7 @@ def build_image_prompt(product, style, comment, image_number, has_references=Fal
 확인되지 않은 로고·문구·가격·인증 배지·효능을 넣지 마세요. 실제 상품의 정확한 외형을
 알 수 없는 부분은 임의로 단정하지 말고 일반적인 연출 이미지로 표현하세요. 이미지 안에
 글자를 넣지 말고, 다른 이미지와 구도 및 장면이 겹치지 않게 만드세요.
+원본이 제공된 경우 창의적인 변형보다 상품 일치도를 최우선으로 하고, 원본과 다른 색상 블록·무늬·장식·로고를 만들지 마세요.
 """.strip()
 
 
@@ -140,9 +149,13 @@ def generate_image(client, product, style, comment, image_number, reference_imag
         tools=[
             {
                 "type": "image_generation",
-                "model": secret("IMAGE_MODEL", "gpt-image-2.5-flare"),
+                "model": (
+                    secret("REFERENCE_IMAGE_MODEL", "gpt-image-2.5-sunburst")
+                    if reference_images
+                    else secret("IMAGE_MODEL", "gpt-image-2.5-flare")
+                ),
                 "size": "1536x1024",
-                "action": "generate",
+                "action": "edit" if reference_images else "generate",
             }
         ],
         tool_choice={"type": "image_generation"},
@@ -297,7 +310,7 @@ with st.form("product_form"):
     st.subheader("3. 글의 방향")
     s1, s2, s3 = st.columns(3)
     audience = s1.text_input("주요 독자", value="구매를 고민하는 실용적인 소비자")
-    tone = s2.selectbox("문체", ["친근하지만 객관적으로", "전문적이고 간결하게", "생활 밀착형 후기처럼"])
+    tone = s2.selectbox("문체", ["친근하고 설득력 있는 상품 소개", "생활 밀착형 구매 가이드", "전문적이고 신뢰감 있게"])
     length = s3.select_slider("목표 분량", options=[1200, 1800, 2400, 3000], value=1800)
     keywords = st.text_input("넣고 싶은 핵심 키워드", placeholder="쉼표로 구분, 과도한 반복은 피합니다")
     image_style = st.selectbox(
@@ -364,7 +377,7 @@ if st.session_state.get("article"):
             "각 이미지의 장면·배경·색감·인물·구도를 따로 적고 한 장씩 생성할 수 있습니다. "
             "생성 후에도 코멘트를 고쳐 다시 만들 수 있습니다."
         )
-        st.warning("AI 이미지는 실제 상품 사진이 아닐 수 있습니다. 정확한 색상·로고·디테일은 사용 허가된 공식 상품 이미지를 이용하세요.")
+        st.warning("실제 상품과 닮은 이미지를 원하면 원본 사진을 반드시 올려주세요. 원본이 없으면 정확한 상품 재현을 보장할 수 없습니다.")
 
         image_count = st.radio("생성할 이미지 수", [3, 4], horizontal=True, key="image_count")
         uploaded_references = st.file_uploader(
@@ -378,12 +391,13 @@ if st.session_state.get("article"):
         if uploaded_references and len(uploaded_references) > 4:
             st.info("원본 이미지는 앞의 4장만 사용합니다.")
         if reference_files:
-            st.caption("원본의 상품 형태·색상·패턴을 참고해 모든 이미지를 생성합니다. 업로드한 사진의 사용 권한을 확인해주세요.")
+            st.success("실상품 보존 모드가 적용됩니다. 첫 번째 사진을 주 기준으로 상품 디자인을 유지하고, 나머지 사진은 세부 형태 참고용으로 사용합니다.")
+            st.caption("가장 정확하고 선명한 정면 사진을 첫 번째로 올려주세요. 업로드한 사진의 사용 권한도 확인해주세요.")
             preview_columns = st.columns(min(len(reference_files), 4))
             for preview_index, uploaded in enumerate(reference_files):
                 preview_columns[preview_index].image(uploaded, caption=f"원본 {preview_index + 1}", use_container_width=True)
         else:
-            st.caption("원본 이미지가 없습니다. 아래의 상품 정보와 코멘트만으로 이미지를 생성합니다.")
+            st.error("원본 이미지가 없습니다. 이 상태에서 생성하면 실제 상품과 다르게 보일 수 있으므로 블로그 상품 소개용으로는 권장하지 않습니다.")
 
         reference_payload = [
             (uploaded.getvalue(), uploaded.type or "image/png")
